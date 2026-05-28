@@ -13,7 +13,7 @@ st.set_page_config(
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
-BACKEND_URL = "http://127.0.0.1:8000"
+BACKEND_URL = "https://researchmind-ai-o9wt.onrender.com"
 
 st.title("🤖 ResearchMind AI — Advanced Paper Assistant")
 st.caption("Analyze dense research literature with automated source grounding and zero hallucinations.")
