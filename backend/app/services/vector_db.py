@@ -1,7 +1,7 @@
 import os
 from typing import List, Dict, Any
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_google_genai import GoogleGenAIEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
 
@@ -10,18 +10,22 @@ DB_FAISS_PATH = os.path.join(os.path.dirname(__file__), "../../../local_faiss_st
 
 class VectorDBService:
     def __init__(self):
-        # Using a highly-rated, lightweight open-source embedding model
-        # 'all-MiniLM-L6-v2' runs fast locally on CPU and yields great semantic search scores
-        self.embeddings = HuggingFaceEmbeddings(
-            model_name="sentence-transformers/all-MiniLM-L6-v2",
-            model_kwargs={'device': 'cpu'}
-        )
-        # 1000 character chunks with a 200 character overlap keeps structural text intact
+        # 1. Text splitter ko __init__ ke andar hi rakhein (4 spaces indent)
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000,
             chunk_overlap=200,
             length_function=len,
             separators=["\n\n", "\n", " ", ""]
+        )
+        # Shuruat mein embeddings None rahegi, jab tak configure_embeddings call na ho
+        self.embeddings = None
+
+    # 2. Yeh ek alag method hona chahiye (Class ke parallel, 4 spaces indent)
+    def configure_embeddings(self, api_key: str):
+        # Iske andar ka code 8 spaces indent hoga
+        self.embeddings = GoogleGenAIEmbeddings(
+            model="models/text-embedding-004",
+            google_api_key=api_key
         )
 
     def create_and_save_index(self, extracted_pages: List[Dict[str, Any]]) -> str:

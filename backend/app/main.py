@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Query , Form , Header
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Form, Header
 from fastapi.middleware.cors import CORSMiddleware
 from app.services.parser import PDFParserService
 from app.services.vector_db import VectorDBService
@@ -10,6 +10,7 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# Enable CORS for frontend integration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -18,7 +19,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize the vector DB controller
+# Initialize controllers
 vector_service = VectorDBService()
 llm_service = LLMChainService()
 
@@ -27,15 +28,22 @@ llm_service = LLMChainService()
 async def root():
     return {"status": "online", "message": "ResearchMind AI API is running smoothly."}
 
+
 @app.post("/api/v1/process-paper")
-async def process_paper(file: UploadFile = File(...)):
+async def process_paper(file: UploadFile = File(...), x_api_key: str = Header(None)):
     """
-    Parses an uploaded PDF and updates the local FAISS Vector store.
+    Parses an uploaded PDF and updates the local FAISS Vector store using dynamic Gemini Embeddings.
     """
+    if not x_api_key:
+        raise HTTPException(status_code=401, detail="API Key is missing. Please enter it in the sidebar.")
+        
     if not file.filename.endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Invalid file format. Only PDFs are supported.")
     
     try:
+        # Dynamically set embedding key for this transaction
+        vector_service.configure_embeddings(x_api_key)
+        
         file_bytes = await file.read()
         
         # 1. Extract plain text & page numbers
@@ -52,19 +60,29 @@ async def process_paper(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Indexing failed: {str(e)}")
 
+
 @app.get("/api/v1/search")
-async def search_paper(query: str = Query(..., description="The semantic search question to run against the paper")):
+async def search_paper(
+    query: str = Query(..., description="The semantic search question to run against the paper"), 
+    x_api_key: str = Header(None)
+):
     """
     Query endpoint to check the semantic accuracy of the vector store chunks.
     """
+    if not x_api_key:
+        raise HTTPException(status_code=401, detail="API Key is missing. Please enter it in the sidebar.")
+        
     try:
+        # Configure embeddings dynamically before similarity search
+        vector_service.configure_embeddings(x_api_key)
+        
         matched_chunks = vector_service.similarity_search(query, k=3)
         
         # Format the response cleanly for structural verification
         formatted_results = []
         for doc in matched_chunks:
             formatted_results.append({
-                "snippet": doc.page_content[:300] + "...", # Snip for readable logs
+                "snippet": doc.page_content[:300] + "...", 
                 "page": doc.metadata.get("page"),
                 "source": doc.metadata.get("source")
             })
@@ -72,15 +90,19 @@ async def search_paper(query: str = Query(..., description="The semantic search 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- NEW ENDPOINT REQUIRED BY STREAMLIT ---
+
 @app.get("/api/v1/ask-question")
 async def ask_question(query: str = Query(...), x_api_key: str = Header(None)):
+    """
+    Context-aware Q&A backed by dynamic RAG pipeline.
+    """
     if not x_api_key:
         raise HTTPException(status_code=401, detail="API Key is missing. Please enter it in the sidebar.")
     
     try:
-        # Pass the dynamic key to your LLM service
+        # Pass the dynamic key to both LLM and Vector services
         llm_service.configure_key(x_api_key)
+        vector_service.configure_embeddings(x_api_key)
         
         matched_chunks = vector_service.similarity_search(query, k=4)
         ai_response = llm_service.generate_citation_answer(query, matched_chunks)
@@ -96,28 +118,36 @@ async def ask_question(query: str = Query(...), x_api_key: str = Header(None)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
-@app.get("/api/v1/summarize")
 
+@app.get("/api/v1/summarize")
 async def summarize_paper(x_api_key: str = Header(None)):
+    """
+    Extracts core elements to generate a structured study summary.
+    """
     if not x_api_key:
         raise HTTPException(status_code=401, detail="API Key is missing. Please enter it in the sidebar.")
     try:
-       
         llm_service.configure_key(x_api_key)
+        vector_service.configure_embeddings(x_api_key)
         
-        # Search for chunks most likely to contain summary info
         matched_chunks = vector_service.similarity_search("Abstract Introduction Conclusion Summary Findings", k=5)
         ai_response = llm_service.generate_summary(matched_chunks)
         return {"answer": ai_response}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Summary Gen Failed: {str(e)}")
 
+
 @app.get("/api/v1/research-gaps")
 async def research_gaps(x_api_key: str = Header(None)): 
+    """
+    Analyzes literature boundaries and potential scope modifications.
+    """
     if not x_api_key:
-        raise HTTPException(status_code=401, detail="API Key is missing.")
+        raise HTTPException(status_code=401, detail="API Key is missing. Please enter it in the sidebar.")
     try:
         llm_service.configure_key(x_api_key)  
+        vector_service.configure_embeddings(x_api_key)
+        
         matched_chunks = vector_service.similarity_search("Limitations Future Work Research Gaps", k=5)
         ai_response = llm_service.analyze_research_gaps(matched_chunks)
         return {"answer": ai_response}
@@ -127,15 +157,21 @@ async def research_gaps(x_api_key: str = Header(None)):
 
 @app.get("/api/v1/generate-quiz")
 async def generate_quiz(x_api_key: str = Header(None)):  
+    """
+    Generates concept verification questions directly linked to data findings.
+    """
     if not x_api_key:
-        raise HTTPException(status_code=401, detail="API Key is missing.")
+        raise HTTPException(status_code=401, detail="API Key is missing. Please enter it in the sidebar.")
     try:
         llm_service.configure_key(x_api_key)  
+        vector_service.configure_embeddings(x_api_key)
+        
         matched_chunks = vector_service.similarity_search("Methodology experiments baseline results accuracy metrics", k=4)
         ai_response = llm_service.generate_quiz(matched_chunks)
         return {"answer": ai_response}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Quiz Gen Failed: {str(e)}")
+
 
 @app.post("/api/v1/analyze-image")
 async def analyze_image_endpoint(
@@ -143,14 +179,16 @@ async def analyze_image_endpoint(
     query: str = Form("Please explain the main findings shown in this chart/table."),
     x_api_key: str = Header(None) 
 ):
+    """
+    Processes complex multimodal chart/diagram context alongside user instructions.
+    """
     if not x_api_key:
-        raise HTTPException(status_code=401, detail="API Key is missing.")
+        raise HTTPException(status_code=401, detail="API Key is missing. Please enter it in the sidebar.")
     
     try:
         if not file.content_type.startswith('image/'):
             raise HTTPException(status_code=400, detail="File must be an image.")
         
-       
         llm_service.configure_key(x_api_key)
         
         image_bytes = await file.read()
@@ -159,6 +197,7 @@ async def analyze_image_endpoint(
         return {"answer": ai_response}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Vision Analysis Failed: {str(e)}")
+
 
 if __name__ == "__main__":
     import uvicorn
