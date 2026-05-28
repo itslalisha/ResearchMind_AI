@@ -23,7 +23,7 @@ class VectorDBService:
     # 2. Yeh ek alag method hona chahiye (Class ke parallel, 4 spaces indent)
     def configure_embeddings(self, api_key: str):
         self.embeddings = GoogleGenerativeAIEmbeddings(
-            model="models/embedding-001",
+            model="text-embedding-004",
             google_api_key=api_key
        )
 
