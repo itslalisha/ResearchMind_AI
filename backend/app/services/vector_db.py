@@ -56,6 +56,7 @@ class DirectRESTEmbeddings:
             payload = {
                 "requests": [
                     {
+                        "model": f"models/{self.model_name}",
                         "content": {
                             "parts": [
                                 {"text": text}
