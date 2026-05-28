@@ -3,18 +3,24 @@ import json
 import time
 import shutil
 import urllib.request
+
 from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-
+# =========================================================
+# FAISS STORAGE PATH
+# =========================================================
 DB_FAISS_PATH = os.path.join(
     os.path.dirname(__file__),
     "../../../local_faiss_index"
 )
 
-
+# =========================================================
+# DIRECT GOOGLE REST API EMBEDDINGS
+# =========================================================
 class DirectRESTEmbeddings:
+
     def __init__(self, api_key: str):
 
         if not api_key:
@@ -22,24 +28,30 @@ class DirectRESTEmbeddings:
 
         self.api_key = api_key
 
-        # Latest working embedding model
-        self.model_name = "text-embedding-004"
+        # MOST STABLE MODEL
+        self.model_name = "embedding-001"
 
-        # IMPORTANT: use v1 (NOT v1beta)
+        # IMPORTANT:
+        # embedding-001 works on v1beta
         self.batch_url = (
-            f"https://generativelanguage.googleapis.com/v1/"
+            f"https://generativelanguage.googleapis.com/v1beta/"
             f"models/{self.model_name}:batchEmbedContents"
             f"?key={self.api_key}"
         )
 
         self.single_url = (
-            f"https://generativelanguage.googleapis.com/v1/"
+            f"https://generativelanguage.googleapis.com/v1beta/"
             f"models/{self.model_name}:embedContent"
             f"?key={self.api_key}"
         )
 
-
-    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+    # =====================================================
+    # EMBED MULTIPLE DOCUMENTS
+    # =====================================================
+    def embed_documents(
+        self,
+        texts: list[str]
+    ) -> list[list[float]]:
 
         embeddings = []
 
@@ -75,6 +87,7 @@ class DirectRESTEmbeddings:
             )
 
             try:
+
                 with urllib.request.urlopen(req) as response:
 
                     data = json.loads(
@@ -87,7 +100,9 @@ class DirectRESTEmbeddings:
                         )
 
                     for item in data["embeddings"]:
-                        embeddings.append(item["values"])
+                        embeddings.append(
+                            item["values"]
+                        )
 
             except Exception as e:
 
@@ -102,19 +117,25 @@ class DirectRESTEmbeddings:
                     f"{error_details}"
                 )
 
-            # Avoid rate limits
+            # Prevent API rate limits
             time.sleep(1)
 
         return embeddings
 
-
-    def embed_query(self, text: str) -> list[float]:
+    # =====================================================
+    # EMBED SINGLE QUERY
+    # =====================================================
+    def embed_query(
+        self,
+        text: str
+    ) -> list[float]:
 
         headers = {
             "Content-Type": "application/json"
         }
 
         payload = {
+            "model": f"models/{self.model_name}",
             "content": {
                 "parts": [
                     {"text": text}
@@ -130,6 +151,7 @@ class DirectRESTEmbeddings:
         )
 
         try:
+
             with urllib.request.urlopen(req) as response:
 
                 data = json.loads(
@@ -156,7 +178,9 @@ class DirectRESTEmbeddings:
                 f"{error_details}"
             )
 
-
+# =========================================================
+# VECTOR DATABASE SERVICE
+# =========================================================
 class VectorDBService:
 
     def __init__(self):
@@ -165,19 +189,31 @@ class VectorDBService:
             chunk_size=700,
             chunk_overlap=100,
             length_function=len,
-            separators=["\n\n", "\n", " ", ""]
+            separators=[
+                "\n\n",
+                "\n",
+                " ",
+                ""
+            ]
         )
 
         self.embeddings = None
 
-
-    def configure_embeddings(self, api_key: str):
+    # =====================================================
+    # CONFIGURE EMBEDDINGS
+    # =====================================================
+    def configure_embeddings(
+        self,
+        api_key: str
+    ):
 
         self.embeddings = DirectRESTEmbeddings(
             api_key=api_key
         )
 
-
+    # =====================================================
+    # CREATE + SAVE FAISS INDEX
+    # =====================================================
     def create_and_save_index(
         self,
         extracted_pages: list
@@ -194,7 +230,7 @@ class VectorDBService:
 
             text = ""
 
-            # Handle dict pages
+            # Handle dictionary pages
             if isinstance(page, dict):
 
                 text = (
@@ -222,12 +258,14 @@ class VectorDBService:
 
             text = str(text).strip()
 
-            # Skip empty chunks
+            # Skip tiny/empty text
             if not text or len(text) < 5:
                 continue
 
-            # Split text
-            chunks = self.text_splitter.split_text(text)
+            # Split into chunks
+            chunks = self.text_splitter.split_text(
+                text
+            )
 
             for chunk in chunks:
 
@@ -258,7 +296,7 @@ class VectorDBService:
         if not documents:
             return "No text contents found to index."
 
-        # Delete old FAISS index
+        # Delete old index
         if os.path.exists(DB_FAISS_PATH):
             shutil.rmtree(DB_FAISS_PATH)
 
@@ -268,7 +306,7 @@ class VectorDBService:
             self.embeddings
         )
 
-        # Save DB
+        # Save locally
         db.save_local(DB_FAISS_PATH)
 
         return (
@@ -276,7 +314,9 @@ class VectorDBService:
             f"{len(documents)} chunks."
         )
 
-
+    # =====================================================
+    # SIMILARITY SEARCH
+    # =====================================================
     def similarity_search(
         self,
         query: str,
