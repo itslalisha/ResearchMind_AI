@@ -10,7 +10,7 @@ DB_FAISS_PATH = os.path.join(os.path.dirname(__file__), "../../../local_faiss_in
 class DirectGoogleEmbeddings:
     def __init__(self, api_key: str):
         genai.configure(api_key=api_key)
-        self.model_name = "models/text-embedding-004"
+        self.model_name = "models/embedding-001"
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         """Embeds texts in small, lightning-fast batches to prevent Render timeouts."""
