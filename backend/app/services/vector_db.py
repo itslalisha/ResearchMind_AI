@@ -1,7 +1,7 @@
 import os
 from typing import List, Dict, Any
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_google_genai import GoogleGenAIEmbeddings
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
 
@@ -22,11 +22,10 @@ class VectorDBService:
 
     # 2. Yeh ek alag method hona chahiye (Class ke parallel, 4 spaces indent)
     def configure_embeddings(self, api_key: str):
-        # Iske andar ka code 8 spaces indent hoga
-        self.embeddings = GoogleGenAIEmbeddings(
+        self.embeddings = GoogleGenerativeAIEmbeddings(
             model="models/text-embedding-004",
             google_api_key=api_key
-        )
+       )
 
     def create_and_save_index(self, extracted_pages: List[Dict[str, Any]]) -> str:
         """
