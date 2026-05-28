@@ -1,53 +1,86 @@
 import os
+import json
 import time
-import google.generativeai as genai
+import urllib.request
 from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 DB_FAISS_PATH = os.path.join(os.path.dirname(__file__), "../../../local_faiss_index")
 
-class DirectGoogleEmbeddings:
+# --- ULTIMATE BYPASS: Direct HTTP REST API (No SDK Bugs) ---
+class DirectRESTEmbeddings:
     def __init__(self, api_key: str):
-        genai.configure(api_key=api_key)
-        self.model_name = "models/embedding-001"
+        self.api_key = api_key
+        # Using the standard, highly accurate text-embedding-004 model
+        self.model_name = "text-embedding-004"
+        self.batch_url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model_name}:batchEmbedContents?key={self.api_key}"
+        self.single_url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model_name}:embedContent?key={self.api_key}"
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        """Embeds texts in small, lightning-fast batches to prevent Render timeouts."""
+        """Embeds multiple chunks directly via Google's raw REST API."""
         embeddings = []
-        # Google API accepts up to 100 texts per batch, we'll use 20 for extreme speed & safety
-        batch_size = 20
-        
+        batch_size = 15  # Optimal batch size for fast cloud processing
+        headers = {'Content-Type': 'application/json'}
+
         for i in range(0, len(texts), batch_size):
             batch = texts[i:i+batch_size]
+            
+            payload = {
+                "requests": [
+                    {
+                        "model": f"models/{self.model_name}",
+                        "content": {"parts": [{"text": text}]}
+                    } for text in batch
+                ]
+            }
+            
+            req = urllib.request.Request(
+                self.batch_url, 
+                data=json.dumps(payload).encode('utf-8'), 
+                headers=headers
+            )
+            
             try:
-                response = genai.embed_content(
-                    model=self.model_name,
-                    content=batch,
-                    # Removing task_type forces general fast embedding layout
-                )
-                embeddings.extend(response['embedding'])
-                time.sleep(0.1)  # Micro-sleep to avoid rate limits
+                with urllib.request.urlopen(req) as response:
+                    data = json.loads(response.read().decode())
+                    for item in data.get('embeddings', []):
+                        embeddings.append(item['values'])
             except Exception as e:
-                raise RuntimeError(f"Google Embedding Batch Failed: {str(e)}")
+                # Catch detailed exact error from Google's server
+                error_details = e.read().decode() if hasattr(e, 'read') else str(e)
+                raise RuntimeError(f"Raw REST API Batch Error: {error_details}")
+                
+            time.sleep(0.3)  # Small breather for the API rate limits
         return embeddings
 
     def embed_query(self, text: str) -> list[float]:
-        """Embeds a single query string seamlessly."""
+        """Embeds a single search query directly via Google's raw REST API."""
+        headers = {'Content-Type': 'application/json'}
+        payload = {
+            "model": f"models/{self.model_name}",
+            "content": {"parts": [{"text": text}]}
+        }
+        
+        req = urllib.request.Request(
+            self.single_url, 
+            data=json.dumps(payload).encode('utf-8'), 
+            headers=headers
+        )
+        
         try:
-            response = genai.embed_content(
-                model=self.model_name,
-                content=text
-            )
-            return response['embedding']
+            with urllib.request.urlopen(req) as response:
+                data = json.loads(response.read().decode())
+                return data['embedding']['values']
         except Exception as e:
-            raise RuntimeError(f"Google Query Embedding Failed: {str(e)}")
+            error_details = e.read().decode() if hasattr(e, 'read') else str(e)
+            raise RuntimeError(f"Raw REST API Query Error: {error_details}")
 
 
 class VectorDBService:
     def __init__(self):
         self.text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=700,       # Made slightly smaller for faster parallel processing
+            chunk_size=700,
             chunk_overlap=100,
             length_function=len,
             separators=["\n\n", "\n", " ", ""]
@@ -55,25 +88,17 @@ class VectorDBService:
         self.embeddings = None
 
     def configure_embeddings(self, api_key: str):
-        self.embeddings = DirectGoogleEmbeddings(api_key=api_key)
+        self.embeddings = DirectRESTEmbeddings(api_key=api_key)
 
     def create_and_save_index(self, extracted_pages: list) -> str:
         if not self.embeddings:
             raise ValueError("Embeddings not configured. Please pass API key first.")
             
         documents = []
-        
-        # Debug log to see exact structure in Render logs if needed
-        print(f"DEBUG: Received {len(extracted_pages)} pages from parser.")
-        if extracted_pages and isinstance(extracted_pages, list):
-            print(f"DEBUG: Sample page keys -> {list(extracted_pages[0].keys())}")
-
         for page in extracted_pages:
-            # Smart check: text kisi bhi common key mein ho, hum extract kar lenge
             text = ""
             if isinstance(page, dict):
                 text = page.get("text") or page.get("content") or page.get("page_text") or ""
-                # Fallback: Agar upar ki keys nahi mili par value ek string hai, toh check values
                 if not text:
                     for val in page.values():
                         if isinstance(val, str) and len(val.strip()) > len(text):
@@ -82,7 +107,7 @@ class VectorDBService:
                 text = page
                 
             text = str(text).strip()
-            if not text or len(text) < 5:  # Ignore empty or garbage chunks
+            if not text or len(text) < 5:
                 continue
             
             chunks = self.text_splitter.split_text(text)
@@ -99,7 +124,6 @@ class VectorDBService:
         if not documents:
             return "No text contents found to index."
             
-        # Build FAISS database and save locally
         db = FAISS.from_documents(documents, self.embeddings)
         db.save_local(DB_FAISS_PATH)
         return f"Successfully indexed {len(documents)} chunks from the paper."
