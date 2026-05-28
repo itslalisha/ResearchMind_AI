@@ -62,9 +62,27 @@ class VectorDBService:
             raise ValueError("Embeddings not configured. Please pass API key first.")
             
         documents = []
+        
+        # Debug log to see exact structure in Render logs if needed
+        print(f"DEBUG: Received {len(extracted_pages)} pages from parser.")
+        if extracted_pages and isinstance(extracted_pages, list):
+            print(f"DEBUG: Sample page keys -> {list(extracted_pages[0].keys())}")
+
         for page in extracted_pages:
-            text = page.get("text", "").strip()
-            if not text:
+            # Smart check: text kisi bhi common key mein ho, hum extract kar lenge
+            text = ""
+            if isinstance(page, dict):
+                text = page.get("text") or page.get("content") or page.get("page_text") or ""
+                # Fallback: Agar upar ki keys nahi mili par value ek string hai, toh check values
+                if not text:
+                    for val in page.values():
+                        if isinstance(val, str) and len(val.strip()) > len(text):
+                            text = val
+            elif isinstance(page, str):
+                text = page
+                
+            text = str(text).strip()
+            if not text or len(text) < 5:  # Ignore empty or garbage chunks
                 continue
             
             chunks = self.text_splitter.split_text(text)
@@ -72,8 +90,8 @@ class VectorDBService:
                 doc = Document(
                     page_content=chunk,
                     metadata={
-                        "source": page.get("source", "Unknown"),
-                        "page": page.get("page_number", 0)
+                        "source": page.get("source", "Uploaded_Paper") if isinstance(page, dict) else "Uploaded_Paper",
+                        "page": page.get("page_number", 0) if isinstance(page, dict) else 0
                     }
                 )
                 documents.append(doc)
