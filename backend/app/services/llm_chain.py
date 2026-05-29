@@ -14,86 +14,102 @@ class LLMChainService:
         # This dynamically sets the key for the user's specific request
         genai.configure(api_key=api_key)
 
-    def generate_citation_answer(self, query: str, context_chunks: List[Document]) -> str:
-        """
-        Takes raw vector store documents, packages them with citation markers,
-        and prompts Gemini to answer strictly based on the provided text.
-        """
-        formatted_context = ""
-        for idx, doc in enumerate(context_chunks):
+    def generate_citation_answer(self, query: str, matched_chunks: list) -> str:
+        """Generates a detailed, conversational Q&A answer with natural citations."""
+        
+        # Structuring context clearly for the LLM
+        context_parts = []
+        for doc in matched_chunks:
             page_num = doc.metadata.get("page", "Unknown")
-            source_file = doc.metadata.get("source", "Document")
-            formatted_context += f"--- Context Block {idx+1} [Source: {source_file} | Page: {page_num}] ---\n"
-            formatted_context += f"{doc.page_content}\n\n"
-
+            context_parts.append(f"--- Excerpt from Page {page_num} ---\n{doc.page_content}")
+            
+        context_text = "\n\n".join(context_parts)
+        
         prompt = f"""
-You are the advanced core engine of ResearchMind AI, an elite assistant helping researchers analyze technical papers.
-
-User Question: "{query}"
-
-Retrieved Context from the Research Paper:
-{formatted_context}
-
-CRITICAL INSTRUCTIONS:
-1. Rely ONLY on the clear facts stated directly within the Context Blocks above. Do not assume or extrapolate beyond this data.
-2. You MUST cite the source page numbers directly inside your answers next to the facts you present (e.g., "The model achieves 94% accuracy [Page 4].").
-3. If the retrieved context does not contain enough information to decisively answer the user's question, state clearly that the necessary details are not present in the current index. Do not hallucinate.
-
-Provide a clear, highly structured academic breakdown response with clear citations:
-"""
+        You are a highly intelligent and helpful academic research assistant. Answer the user's question comprehensively based ONLY on the provided paper excerpts.
+        
+        Guidelines for your response:
+        1. **Be Detailed & Elaborative:** Do not just give a one-word or one-line list. Explain what each point means based on the text.
+        2. **Excellent Formatting:** Use bold text, bullet points, and proper paragraphs to make the answer easy to read.
+        3. **Natural Citations:** Cite the source pages naturally at the end of a complete sentence or explanation using the format (Page X). 
+        4. **DO NOT** repeat the page number after every single word or short phrase.
+        
+        User's Question: {query}
+        
+        Provided Context:
+        {context_text}
+        """
         response = self.model.generate_content(prompt)
         return response.text
     
 
-    def generate_summary(self, context_chunks: List[Document]) -> str:
-        formatted_context = "\n\n".join([doc.page_content for doc in context_chunks])
+    def generate_summary(self, matched_chunks: list) -> str:
+        # Pushing page numbers into the context
+        context_parts = []
+        for doc in matched_chunks:
+            page_num = doc.metadata.get("page", "Unknown")
+            context_parts.append(f"[Page {page_num}]: {doc.page_content}")
+        context_text = "\n\n".join(context_parts)
+        
         prompt = f"""
-You are an expert AI research assistant. Based strictly on the provided paper excerpts below, write a highly structured, 3-part summary of the paper.
+        You are an expert academic researcher. Please read the following excerpts from a research paper and provide a HIGHLY DETAILED and COMPREHENSIVE summary. 
+        
+        Your response MUST include:
+        1. A detailed introduction of the core problem.
+        2. The main methodology or approach used.
+        3. Key findings and results (in detailed bullet points).
+        
+        CRITICAL RULE: You must naturally cite the page numbers at the end of relevant sentences using the format (Page X).
+        
+        Paper Excerpts:
+        {context_text}
+        """
+        response = self.model.generate_content(prompt)
+        return response.text
 
-Context:
-{formatted_context}
-
-Format your response exactly like this:
-### 🎯 Objective
-(What problem is the paper trying to solve?)
-### ⚙️ Core Methodology
-(How did they solve it?)
-### 🏆 Key Results
-(What were the final metrics or findings?)
-"""
-        return self.model.generate_content(prompt).text
-
-    def analyze_research_gaps(self, context_chunks: List[Document]) -> str:
-        formatted_context = "\n\n".join([f"[Page: {doc.metadata.get('page')}] {doc.page_content}" for doc in context_chunks])
+    def analyze_research_gaps(self, matched_chunks: list) -> str:
+        context_parts = []
+        for doc in matched_chunks:
+            page_num = doc.metadata.get("page", "Unknown")
+            context_parts.append(f"[Page {page_num}]: {doc.page_content}")
+        context_text = "\n\n".join(context_parts)
+        
         prompt = f"""
-You are an elite academic reviewer. Analyze the provided excerpts from this paper and identify the limitations and future research gaps.
+        You are an expert academic reviewer. Analyze the following research paper excerpts to deeply identify research gaps, limitations, and future work.
+        
+        Please structure your highly detailed response as follows:
+        - **Core Limitations:** (Detail what the paper missed).
+        - **Future Research Directions:** (Provide actionable suggestions).
+        
+        CRITICAL RULE: Cite the source pages naturally for every point you make using the format (Page X).
 
-Context:
-{formatted_context}
+        Paper Excerpts:
+        {context_text}
+        """
+        response = self.model.generate_content(prompt)
+        return response.text
 
-Provide a bulleted list of 3 to 5 clear research gaps or limitations mentioned or implied in the text. Cite the page numbers.
-"""
-        return self.model.generate_content(prompt).text
-
-    def generate_quiz(self, context_chunks: List[Document]) -> str:
-        formatted_context = "\n\n".join([doc.page_content for doc in context_chunks])
+    def generate_quiz(self, matched_chunks: list) -> str:
+        context_parts = []
+        for doc in matched_chunks:
+            page_num = doc.metadata.get("page", "Unknown")
+            context_parts.append(f"[Page {page_num}]: {doc.page_content}")
+        context_text = "\n\n".join(context_parts)
+        
         prompt = f"""
-You are an academic professor. Based on the provided paper excerpts, generate a short, challenging multiple-choice quiz (3 questions) to test the reader's understanding.
+        Generate a comprehensive quiz based on the following research paper excerpts.
+        
+        Create 5 Multiple Choice Questions (MCQs). For each question:
+        1. Write the question clearly.
+        2. Provide 4 distinct options (A, B, C, D).
+        3. Clearly state the **Correct Answer**.
+        4. Provide a **Detailed Explanation** and cite the specific page number where the answer was found, formatted as (Source: Page X).
 
-Context:
-{formatted_context}
-
-Format your response strictly like this:
-**Question 1:** [Question text]
-A) ...
-B) ...
-C) ...
-D) ...
-*Correct Answer:* [Answer] - [Brief explanation]
-
-(Repeat for Question 2 and 3)
-"""
-        return self.model.generate_content(prompt).text
+        Paper Excerpts:
+        {context_text}
+        """
+        response = self.model.generate_content(prompt)
+        return response.text
     
     def analyze_image(self, image_bytes: bytes, user_query: str) -> str:
         # Convert raw bytes into a format Gemini can see
