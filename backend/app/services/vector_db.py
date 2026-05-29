@@ -1,182 +1,18 @@
 import os
-import json
-import time
 import shutil
-import urllib.request
 
 from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
 # =========================================================
-# FAISS STORAGE PATH
+# FAISS PATH
 # =========================================================
 DB_FAISS_PATH = os.path.join(
     os.path.dirname(__file__),
     "../../../local_faiss_index"
 )
-
-# =========================================================
-# DIRECT GOOGLE REST API EMBEDDINGS
-# =========================================================
-class DirectRESTEmbeddings:
-
-    def __init__(self, api_key: str):
-
-        if not api_key:
-            raise ValueError("GOOGLE_API_KEY is missing.")
-
-        self.api_key = api_key
-
-        # MOST STABLE MODEL
-        self.model_name = "embedding-001"
-
-        # IMPORTANT:
-        # embedding-001 works on v1beta
-        self.batch_url = (
-            f"https://generativelanguage.googleapis.com/v1beta/"
-            f"models/{self.model_name}:batchEmbedContents"
-            f"?key={self.api_key}"
-        )
-
-        self.single_url = (
-            f"https://generativelanguage.googleapis.com/v1beta/"
-            f"models/{self.model_name}:embedContent"
-            f"?key={self.api_key}"
-        )
-
-    # =====================================================
-    # EMBED MULTIPLE DOCUMENTS
-    # =====================================================
-    def embed_documents(
-        self,
-        texts: list[str]
-    ) -> list[list[float]]:
-
-        embeddings = []
-
-        batch_size = 15
-
-        headers = {
-            "Content-Type": "application/json"
-        }
-
-        for i in range(0, len(texts), batch_size):
-
-            batch = texts[i:i + batch_size]
-
-            payload = {
-                "requests": [
-                    {
-                        "model": f"models/{self.model_name}",
-                        "content": {
-                            "parts": [
-                                {"text": text}
-                            ]
-                        }
-                    }
-                    for text in batch
-                ]
-            }
-
-            req = urllib.request.Request(
-                self.batch_url,
-                data=json.dumps(payload).encode("utf-8"),
-                headers=headers,
-                method="POST"
-            )
-
-            try:
-
-                with urllib.request.urlopen(req) as response:
-
-                    data = json.loads(
-                        response.read().decode()
-                    )
-
-                    if "embeddings" not in data:
-                        raise RuntimeError(
-                            f"No embeddings returned: {data}"
-                        )
-
-                    for item in data["embeddings"]:
-                        embeddings.append(
-                            item["values"]
-                        )
-
-            except Exception as e:
-
-                error_details = (
-                    e.read().decode()
-                    if hasattr(e, "read")
-                    else str(e)
-                )
-
-                raise RuntimeError(
-                    f"Google Embedding Batch Failed: "
-                    f"{error_details}"
-                )
-
-            # Prevent API rate limits
-            time.sleep(1)
-
-        return embeddings
-
-    # =====================================================
-    # EMBED SINGLE QUERY
-    # =====================================================
-    def embed_query(
-        self,
-        text: str
-    ) -> list[float]:
-
-        headers = {
-            "Content-Type": "application/json"
-        }
-
-        payload = {
-            "model": f"models/{self.model_name}",
-            "content": {
-                "parts": [
-                    {"text": text}
-                ]
-            }
-        }
-
-        req = urllib.request.Request(
-            self.single_url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers=headers,
-            method="POST"
-        )
-
-        try:
-
-            with urllib.request.urlopen(req) as response:
-
-                data = json.loads(
-                    response.read().decode()
-                )
-
-                if "embedding" not in data:
-                    raise RuntimeError(
-                        f"No embedding returned: {data}"
-                    )
-
-                return data["embedding"]["values"]
-
-        except Exception as e:
-
-            error_details = (
-                e.read().decode()
-                if hasattr(e, "read")
-                else str(e)
-            )
-
-            raise RuntimeError(
-                f"Google Embedding Query Failed: "
-                f"{error_details}"
-            )
 
 # =========================================================
 # VECTOR DATABASE SERVICE
@@ -189,12 +25,7 @@ class VectorDBService:
             chunk_size=700,
             chunk_overlap=100,
             length_function=len,
-            separators=[
-                "\n\n",
-                "\n",
-                " ",
-                ""
-            ]
+            separators=["\n\n", "\n", " ", ""]
         )
 
         self.embeddings = None
@@ -202,17 +33,19 @@ class VectorDBService:
     # =====================================================
     # CONFIGURE EMBEDDINGS
     # =====================================================
-    def configure_embeddings(
-        self,
-        api_key: str
-    ):
+    def configure_embeddings(self, api_key: str):
 
-        self.embeddings = DirectRESTEmbeddings(
-            api_key=api_key
+        if not api_key:
+            raise ValueError("GOOGLE_API_KEY missing")
+
+        # OFFICIAL WORKING GEMINI EMBEDDINGS
+        self.embeddings = GoogleGenerativeAIEmbeddings(
+            model="models/embedding-001",
+            google_api_key=api_key
         )
 
     # =====================================================
-    # CREATE + SAVE FAISS INDEX
+    # CREATE + SAVE INDEX
     # =====================================================
     def create_and_save_index(
         self,
@@ -230,7 +63,7 @@ class VectorDBService:
 
             text = ""
 
-            # Handle dictionary pages
+            # Handle dict
             if isinstance(page, dict):
 
                 text = (
@@ -240,7 +73,7 @@ class VectorDBService:
                     or ""
                 )
 
-                # fallback: longest string
+                # fallback
                 if not text:
 
                     for val in page.values():
@@ -251,21 +84,17 @@ class VectorDBService:
                         ):
                             text = val
 
-            # Handle string pages
+            # Handle string
             elif isinstance(page, str):
-
                 text = page
 
             text = str(text).strip()
 
-            # Skip tiny/empty text
+            # Skip empty text
             if not text or len(text) < 5:
                 continue
 
-            # Split into chunks
-            chunks = self.text_splitter.split_text(
-                text
-            )
+            chunks = self.text_splitter.split_text(text)
 
             for chunk in chunks:
 
@@ -294,19 +123,19 @@ class VectorDBService:
                 documents.append(doc)
 
         if not documents:
-            return "No text contents found to index."
+            return "No text contents found."
 
-        # Delete old index
+        # DELETE OLD INDEX
         if os.path.exists(DB_FAISS_PATH):
             shutil.rmtree(DB_FAISS_PATH)
 
-        # Create FAISS DB
+        # CREATE FAISS
         db = FAISS.from_documents(
             documents,
             self.embeddings
         )
 
-        # Save locally
+        # SAVE
         db.save_local(DB_FAISS_PATH)
 
         return (
@@ -330,8 +159,7 @@ class VectorDBService:
 
         if not os.path.exists(DB_FAISS_PATH):
             raise FileNotFoundError(
-                "No vector store found. "
-                "Please upload a paper first."
+                "No vector DB found."
             )
 
         db = FAISS.load_local(
